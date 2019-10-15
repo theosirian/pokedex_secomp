@@ -1,11 +1,17 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:quiver/iterables.dart' as quiver;
+import 'package:path_provider/path_provider.dart';
+import 'package:async_resource/file_resource.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 
 import './state.dart';
 import './model.dart';
+
+const baseUrl = 'https://pokeapi.theosirian.com/api/v2';
 
 class PokemonListScreen extends StatefulWidget {
   @override
@@ -13,24 +19,33 @@ class PokemonListScreen extends StatefulWidget {
 }
 
 class _PokemonListState extends State<PokemonListScreen> {
+  double progress;
   bool search;
   TextEditingController searchController;
 
   Dio dio;
   LoadState loadState;
 
+  String cachePath;
+
   @override
   void initState() {
     super.initState();
 
     this.dio = Dio();
-    this.dio.options.baseUrl = 'https://pokeapi.co/api/v2';
+    this.dio.options.baseUrl = baseUrl;
 
     this.loadState = InitialState();
 
     this.search = false;
     this.searchController = TextEditingController();
     this.searchController.addListener(() => setState(() {}));
+
+    this.initAsync();
+  }
+
+  void initAsync() async {
+    this.cachePath = (await getApplicationDocumentsDirectory()).path;
   }
 
   @override
@@ -119,27 +134,45 @@ class _PokemonListState extends State<PokemonListScreen> {
   }
 
   Future<PokemonModel> loadItem(String name) async {
-    try {
-      final response = await this.dio.get('/pokemon/$name');
-      return PokemonModel.fromMap(response.data);
-    } on DioError catch (e) {
-      this.handleError(e);
-    }
+    final resource = HttpNetworkResource<PokemonModel>(
+      url: '$baseUrl/pokemon/$name',
+      parser: (contents) => PokemonModel.fromMap(jsonDecode(contents)),
+      cache: FileResource(File('$cachePath/$name.json')),
+      maxAge: const Duration(hours: 72),
+      strategy: CacheStrategy.cacheFirst,
+    );
+
+    return await resource.get();
   }
 
   void loadData() async {
     setState(() {
+      this.progress = 0.0;
       this.loadState = LoadingState();
     });
 
     try {
-      final response = await this.dio.get('/pokemon/?limit=10');
+      final step = 8;
+      final count = 151;
+      final response = await this.dio.get('/pokemon/?limit=$count');
 
-      List<PokemonModel> data = await Future.wait(
-        response.data['results'].map<Future<PokemonModel>>(
-          (p) => this.loadItem(p['name']),
-        ),
-      );
+      final parts = quiver.partition(response.data['results'], step);
+
+      final data = <PokemonModel>[];
+
+      for (final part in parts) {
+        data.addAll(await Future.wait(
+          part.map<Future<PokemonModel>>(
+            (p) => this.loadItem(p['name']),
+          ),
+        ));
+
+        setState(() {
+          this.progress += step.toDouble() / count;
+        });
+
+        print('$progress');
+      }
 
       setState(() {
         this.loadState = SuccessState(
@@ -189,6 +222,11 @@ class _PokemonListState extends State<PokemonListScreen> {
                 color: Colors.red,
                 textColor: Colors.white,
                 onPressed: null,
+              ),
+              const SizedBox(height: 24.0),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 32.0),
+                child: LinearProgressIndicator(value: this.progress),
               ),
             ],
           ),
@@ -284,6 +322,7 @@ class _PokemonListState extends State<PokemonListScreen> {
             ),
             centerTitle: true,
           );
+
     final data = (this.loadState as SuccessState).data;
 
     final searchText = this.searchController.text.trim().toLowerCase();
@@ -302,7 +341,10 @@ class _PokemonListState extends State<PokemonListScreen> {
         body: SingleChildScrollView(
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
-            children: pokemons.map((pokemon) {
+            children: quiver.enumerate(pokemons).map((iv) {
+              final index = iv.index;
+              final pokemon = iv.value;
+
               final typesWidget = pokemon.types.length > 1
                   ? Row(
                       children: <Widget>[
@@ -313,7 +355,7 @@ class _PokemonListState extends State<PokemonListScreen> {
                   : TypeWidget.center(pokemon.types[0]);
 
               return Container(
-                color: pokemon.id % 2 == 0 ? Colors.white12 : Colors.white,
+                color: index % 2 == 0 ? Colors.white12 : Colors.white,
                 padding: const EdgeInsets.all(12.0),
                 child: IntrinsicHeight(
                   child: Row(

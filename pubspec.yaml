@@ -13,10 +13,18 @@ dependencies:
   dio:
   quiver:
   cached_network_image:
+  async_resource:
+  path_provider:
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  flutter_launcher_icons: '^0.7.3'
+
+flutter_icons:
+  android: 'launcher_icon'
+  ios: true
+  image_path: 'assets/launcher_icon.png'
 
 flutter:
   uses-material-design: true
